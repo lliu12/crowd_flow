@@ -1,0 +1,27 @@
+build
+config.h
+*.swp
+*~
+*#
+.DS_Store
+.vscode
+docsrc/stage
+*.txt.user
+__pycache__/
+*.py[cod]
+*.o
+*.la
+*.libs
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+*.libs
