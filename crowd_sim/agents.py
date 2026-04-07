@@ -19,6 +19,10 @@ class Agent:
     desired_speed: float
     dir_x: float  # direction unit vector x-component
     dir_y: float  # direction unit vector y-component
+    orbit_cx: float = 0.0
+    orbit_cy: float = 0.0
+    orbit_radius: float = 0.0
+    angular_speed: float = 0.0
     trail: Deque[Tuple[float, float]] = field(
         default_factory=lambda: deque(maxlen=50)
     )

@@ -1,6 +1,6 @@
 # visualization/pygame_view.py
 import math
-from typing import List
+from typing import List, Optional, Tuple
 import pygame
 
 from ..agents import Agent
@@ -18,7 +18,11 @@ class PygameViewer:
                  walkway: Walkway,
                  sensing_radius: float,
                  pixels_per_meter: float = 80.0,
-                 fps_cap: int = 20):
+                 fps_cap: int = 20,
+                 sensing_half_angle: float = math.radians(60.0),
+                 orbit_center: Optional[Tuple[float, float]] = None,
+                 orbit_radius: Optional[float] = None,
+                 agent_radius_m = 0.2):
         pygame.init()
         self.walkway = walkway
         self.sensing_radius = sensing_radius
@@ -29,9 +33,12 @@ class PygameViewer:
         pygame.display.set_caption("Crowd Simulation")
         self.clock = pygame.time.Clock()
         self.fps_cap = fps_cap
+        self.sensing_half_angle = sensing_half_angle
+        self.orbit_center = orbit_center
+        self.orbit_radius = orbit_radius
 
         self.background_color = (255, 255, 255) # (0, 0, 0)
-        self.agent_radius_m = 0.2  # meters
+        self.agent_radius_m = agent_radius_m  # meters
         self.agent_radius_px = int(self.agent_radius_m * self.ppm)
 
         self.show_cones = True
@@ -136,7 +143,7 @@ class PygameViewer:
                 # Angle of direction in world-space (y up)
                 angle = math.atan2(dir_y, dir_x)
 
-                half_angle = math.radians(60.0)
+                half_angle = self.sensing_half_angle
 
                 # Compute endpoints of the cone in world space
                 left_ang  = angle - half_angle
@@ -206,6 +213,16 @@ class PygameViewer:
 
     def draw(self, agents: List[Agent], sim_time: float) -> None:
         self.screen.fill(self.background_color)
+
+        if self.orbit_center is not None and self.orbit_radius is not None:
+            cx, cy = self.world_to_screen(*self.orbit_center)
+            pygame.draw.circle(
+                self.screen,
+                (180, 180, 180),
+                (cx, cy),
+                int(self.orbit_radius * self.ppm),
+                width=1,
+            )
 
         # Draw agents + cones
         self.draw_agents_and_cones(agents)

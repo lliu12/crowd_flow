@@ -3,7 +3,7 @@ from typing import List, Callable, Dict
 from .agents import Agent
 from .environment import Walkway, BoundaryHandler
 from .neighbors import NeighborGrid
-from .behaviors import simple_unidirectional_behavior, simple_passing_behavior
+from .behaviors import simple_unidirectional_behavior, simple_passing_behavior, circular_orbit_behavior
 
 
 class Simulation:
