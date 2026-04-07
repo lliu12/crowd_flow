@@ -87,7 +87,9 @@ def radial_restoring_velocity(agent: Agent, params: Dict) -> Tuple[float, float]
     """Return a weak radial correction that keeps agents near the target orbit."""
     cx = getattr(agent, "orbit_cx", params.get("circle_center_x", 0.0))
     cy = getattr(agent, "orbit_cy", params.get("circle_center_y", 0.0))
-    target_r = getattr(agent, "orbit_radius", params.get("orbit_radius", 0.0))
+    target_r = getattr(agent, "pass_target_radius", 0.0)
+    if target_r == 0.0:
+        target_r = getattr(agent, "orbit_radius", params.get("orbit_radius", 0.0))
     k_r = params.get("radial_gain", 0.0)
 
     rx = agent.x - cx
@@ -133,6 +135,86 @@ def circular_orbit_behavior(agent: Agent,
     else:
         t = (nearest_d - d_stop) / (d_slow - d_stop)
         speed = t * v0
+
+    corr_vx, corr_vy = radial_restoring_velocity(agent, params)
+
+    agent.dir_x = dir_x
+    agent.dir_y = dir_y
+    agent.vx = speed * dir_x + corr_vx
+    agent.vy = speed * dir_y + corr_vy
+
+
+
+def circular_passing_behavior(agent: Agent,
+                              neighbors: List,
+                              params: Dict) -> None:
+    d_stop = params.get("d_stop", 0.15)
+    d_slow = params.get("d_slow", 0.4)
+    max_offset = params.get("passing_radius_offset", 0.15)
+    target_gain = params.get("passing_target_gain", 2.0)
+    dt = params.get("dt", 0.05)
+
+    dir_x, dir_y = circular_ccw_direction(agent, params)
+
+    base_radius = getattr(agent, "orbit_radius", params.get("orbit_radius", 0.0))
+    current_target = getattr(agent, "pass_target_radius", 0.0)
+    if current_target == 0.0:
+        current_target = base_radius
+
+    nearest_d = None
+    nearest_left_d = None
+
+    for nb in neighbors:
+        in_cone, dist = is_neighbor_in_vision_cone(agent, nb, params, dir_x, dir_y)
+        if not in_cone:
+            continue
+
+        dx, dy = displacement_with_periodic(
+            agent, nb,
+            params.get("Lx", None),
+            params.get("Ly", None),
+            params.get("periodic_x", False),
+            params.get("periodic_y", False),
+        )
+
+        side = dir_x * dy - dir_y * dx
+
+        if nearest_d is None or (dist is not None and dist < nearest_d):
+            nearest_d = dist
+
+        if side > 0.0 and (nearest_left_d is None or (dist is not None and dist < nearest_left_d)):
+            nearest_left_d = dist
+
+    if nearest_left_d is None:
+        pass_strength = 0.0
+    elif nearest_left_d <= d_stop:
+        pass_strength = 1.0
+    elif nearest_left_d >= d_slow:
+        pass_strength = 0.0
+    else:
+        pass_strength = 1.0 - (nearest_left_d - d_stop) / (d_slow - d_stop)
+
+    desired_target_radius = base_radius + max_offset * pass_strength
+    print(f"Agent {agent.id} has current desired target radius {desired_target_radius}")
+
+    alpha = min(1.0, target_gain * dt)
+    current_target = current_target + alpha * (desired_target_radius - current_target)
+    agent.pass_target_radius = current_target
+
+    print(f"Agent {agent.id} has current target radius {agent.pass_target_radius}")
+
+    omega = getattr(agent, "angular_speed", params.get("angular_speed", 0.0))
+    tangential_speed = abs(omega) * current_target
+
+    if nearest_d is None:
+        speed = tangential_speed
+    elif nearest_d <= d_stop:
+        speed = 0.0
+    elif nearest_d >= d_slow:
+        speed = tangential_speed
+    else:
+        t = (nearest_d - d_stop) / (d_slow - d_stop)
+        speed = t * tangential_speed
 
     corr_vx, corr_vy = radial_restoring_velocity(agent, params)
 

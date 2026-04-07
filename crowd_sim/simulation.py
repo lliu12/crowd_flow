@@ -50,6 +50,7 @@ class Simulation:
         behavior_params.setdefault("Ly", self.walkway.Ly)
         behavior_params.setdefault("periodic_x", periodic_x)
         behavior_params.setdefault("periodic_y", periodic_y)
+        behavior_params.setdefault("dt", self.dt)
 
         self.behavior_params = behavior_params
         self.time = 0.0
