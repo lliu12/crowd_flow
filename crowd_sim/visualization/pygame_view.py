@@ -20,6 +20,8 @@ class PygameViewer:
                  pixels_per_meter: float = 80.0,
                  fps_cap: int = 20,
                  sensing_half_angle: float = math.radians(60.0),
+                 side_sensing_radius: Optional[float] = None,
+                 side_sensing_half_angle: float = math.radians(45.0),
                  orbit_center: Optional[Tuple[float, float]] = None,
                  orbit_radius: Optional[float] = None,
                  agent_radius_m = 0.2):
@@ -34,6 +36,8 @@ class PygameViewer:
         self.clock = pygame.time.Clock()
         self.fps_cap = fps_cap
         self.sensing_half_angle = sensing_half_angle
+        self.side_sensing_radius = side_sensing_radius if side_sensing_radius is not None else sensing_radius
+        self.side_sensing_half_angle = side_sensing_half_angle
         self.orbit_center = orbit_center
         self.orbit_radius = orbit_radius
 
@@ -116,6 +120,40 @@ class PygameViewer:
 
         return (r, g, b)
 
+    def draw_cone_outline(self,
+                          x: float,
+                          y: float,
+                          direction_angle: float,
+                          half_angle: float,
+                          radius: float,
+                          color: Tuple[int, int, int],
+                          num_segments: int = 16) -> None:
+        left_ang = direction_angle - half_angle
+        right_ang = direction_angle + half_angle
+
+        sx, sy = self.world_to_screen(x, y)
+        ex_left = x + radius * math.cos(left_ang)
+        ey_left = y + radius * math.sin(left_ang)
+        ex_right = x + radius * math.cos(right_ang)
+        ey_right = y + radius * math.sin(right_ang)
+        esx_left, esy_left = self.world_to_screen(ex_left, ey_left)
+        esx_right, esy_right = self.world_to_screen(ex_right, ey_right)
+
+        pygame.draw.line(self.screen, color, (sx, sy), (esx_left, esy_left), width=1)
+        pygame.draw.line(self.screen, color, (sx, sy), (esx_right, esy_right), width=1)
+
+        arc_points = []
+        for i in range(num_segments + 1):
+            t = i / num_segments
+            ang = left_ang + t * (right_ang - left_ang)
+            ex = x + radius * math.cos(ang)
+            ey = y + radius * math.sin(ang)
+            arc_points.append(self.world_to_screen(ex, ey))
+
+        if len(arc_points) >= 2:
+            pygame.draw.lines(self.screen, color, False, arc_points, width=1)
+
+
     def draw_agents_and_cones(self, agents: List[Agent]) -> None:
         for a in agents:
             sx, sy = self.world_to_screen(a.x, a.y)
@@ -125,12 +163,7 @@ class PygameViewer:
             # Draw agent as circle
             pygame.draw.circle(self.screen, color, (sx, sy), self.agent_radius_px)
 
-            # Draw sensing cone (debug)
             if self.show_cones:
-                R_px = int(self.sensing_radius * self.ppm)
-                cone_color = (80, 80, 80)
-
-                # Direction vector
                 dir_x = a.dir_x
                 dir_y = a.dir_y
                 norm = math.hypot(dir_x, dir_y)
@@ -140,48 +173,25 @@ class PygameViewer:
                 dir_x /= norm
                 dir_y /= norm
 
-                # Angle of direction in world-space (y up)
                 angle = math.atan2(dir_y, dir_x)
+                left_angle = math.atan2(dir_x, -dir_y)
+                right_angle = math.atan2(-dir_x, dir_y)
 
-                half_angle = self.sensing_half_angle
+                forward_color = (120, 120, 120) if not getattr(a, "blocked", False) else (80, 80, 180)
+                side_clear_color =  (200, 230, 250) # (250, 230, 200)
+                side_blocked_color = (255, 150, 160) #  (160, 150, 255)
+                left_color = side_clear_color if not getattr(a, "left_blocked", False) else side_blocked_color
+                right_color = side_clear_color if not getattr(a, "right_blocked", False) else side_blocked_color
 
-                # Compute endpoints of the cone in world space
-                left_ang  = angle - half_angle
-                right_ang = angle + half_angle
-
-                # Cone side endpoints on the circle
-                ex_left  = a.x + self.sensing_radius * math.cos(left_ang)
-                ey_left  = a.y + self.sensing_radius * math.sin(left_ang)
-                ex_right = a.x + self.sensing_radius * math.cos(right_ang)
-                ey_right = a.y + self.sensing_radius * math.sin(right_ang)
-
-                # Transform to screen space
-                sx, sy = self.world_to_screen(a.x, a.y)
-                esx_left,  esy_left  = self.world_to_screen(ex_left,  ey_left)
-                esx_right, esy_right = self.world_to_screen(ex_right, ey_right)
-
-                # 1) Draw the two radial edges
-                pygame.draw.line(self.screen, cone_color, (sx, sy), (esx_left,  esy_left),  width=1)
-                pygame.draw.line(self.screen, cone_color, (sx, sy), (esx_right, esy_right), width=1)
-
-                # 2) Draw the circular arc between the two endpoints
-                #    Approximate the arc with short line segments.
-                num_segments = 24
-                arc_points = []
-                for i in range(num_segments + 1):
-                    t = i / num_segments
-                    ang = left_ang + t * (right_ang - left_ang)
-                    ex = a.x + self.sensing_radius * math.cos(ang)
-                    ey = a.y + self.sensing_radius * math.sin(ang)
-                    arc_points.append(self.world_to_screen(ex, ey))
-
-                # Draw the arc (just the outer curve)
-                if len(arc_points) >= 2:
-                    pygame.draw.lines(self.screen, cone_color, False, arc_points, width=1)
-
-                # Filled cone instead
-                # sector_points = [(sx, sy)] + arc_points
-                # pygame.draw.polygon(self.screen, cone_color, sector_points, width=0)
+                self.draw_cone_outline(
+                    a.x, a.y, angle, self.sensing_half_angle, self.sensing_radius, forward_color, num_segments=24
+                )
+                self.draw_cone_outline(
+                    a.x, a.y, left_angle, self.side_sensing_half_angle, self.side_sensing_radius, left_color, num_segments=12
+                )
+                self.draw_cone_outline(
+                    a.x, a.y, right_angle, self.side_sensing_half_angle, self.side_sensing_radius, right_color, num_segments=12
+                )
 
             if self.show_velocities:
                 vx, vy = a.vx, a.vy  # or however your Agent exposes velocity

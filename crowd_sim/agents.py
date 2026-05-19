@@ -1,7 +1,7 @@
 # agents.py
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Deque, Tuple
+from typing import Deque, Tuple, Optional
 
 
 
@@ -24,6 +24,11 @@ class Agent:
     orbit_radius: float = 0.0
     pass_target_radius: float = 0.0
     angular_speed: float = 0.0
+    blocked: bool = False
+    left_blocked: bool = False
+    right_blocked: bool = False
+    dist_to_nearest: Optional[float] = None
+    angle_to_nearest: Optional[float] = None
     trail: Deque[Tuple[float, float]] = field(
         default_factory=lambda: deque(maxlen=50)
     )

@@ -30,6 +30,38 @@ def displacement_with_periodic(agent, nb,
     return dx, dy
 
 
+def is_neighbor_in_custom_cone(agent,
+                               nb,
+                               params: Dict,
+                               dir_x: float,
+                               dir_y: float,
+                               range_m: float,
+                               half_angle: float) -> Tuple[bool, Optional[float], float, float]:
+    """Check if nb is within a cone with explicit direction, range, and half-angle."""
+    Lx = params.get("Lx", None)
+    Ly = params.get("Ly", None)
+    periodic_x = params.get("periodic_x", False)
+    periodic_y = params.get("periodic_y", False)
+
+    dx, dy = displacement_with_periodic(agent, nb, Lx, Ly, periodic_x, periodic_y)
+
+    dist = math.hypot(dx, dy)
+    if dist == 0.0 or dist > range_m:
+        return False, None, dx, dy
+
+    dot = dir_x * dx + dir_y * dy
+    cos_angle = dot / dist
+
+    if cos_angle <= 0.0:
+        return False, None, dx, dy
+
+    if cos_angle < math.cos(half_angle):
+        return False, None, dx, dy
+
+    return True, dist, dx, dy
+
+
+
 def is_neighbor_in_vision_cone(agent,
                                nb,
                                params: Dict,
@@ -41,32 +73,8 @@ def is_neighbor_in_vision_cone(agent,
     """
     R = params.get("sensing_radius", 3.0)
     theta = params.get("sensing_half_angle", math.radians(60.0))
-
-    Lx = params.get("Lx", None)
-    Ly = params.get("Ly", None)
-    periodic_x = params.get("periodic_x", False)
-    periodic_y = params.get("periodic_y", False)
-
-    # Displacement with periodic boundaries
-    dx, dy = displacement_with_periodic(agent, nb, Lx, Ly, periodic_x, periodic_y)
-
-    dist = math.hypot(dx, dy)
-    if dist == 0.0 or dist > R:
-        return False, None
-
-    # Angle check: cos(angle) = (dir . r) / (|dir||r|)
-    dot = dir_x * dx + dir_y * dy
-    cos_angle = dot / dist
-
-    # Behind or exactly sideways
-    if cos_angle <= 0.0:
-        return False, None
-
-    # Outside half-angle
-    if cos_angle < math.cos(theta):
-        return False, None
-
-    return True, dist
+    in_cone, dist, _, _ = is_neighbor_in_custom_cone(agent, nb, params, dir_x, dir_y, R, theta)
+    return in_cone, dist
 
 def circular_ccw_direction(agent: Agent, params: Dict) -> Tuple[float, float]:
     """Return the unit tangent direction for counterclockwise motion."""
@@ -165,17 +173,17 @@ def circular_passing_behavior(agent: Agent,
     nearest_left_d = None
 
     for nb in neighbors:
-        in_cone, dist = is_neighbor_in_vision_cone(agent, nb, params, dir_x, dir_y)
+        in_cone, dist, dx, dy = is_neighbor_in_custom_cone(
+            agent,
+            nb,
+            params,
+            dir_x,
+            dir_y,
+            params.get("sensing_radius", 3.0),
+            params.get("sensing_half_angle", math.radians(60.0)),
+        )
         if not in_cone:
             continue
-
-        dx, dy = displacement_with_periodic(
-            agent, nb,
-            params.get("Lx", None),
-            params.get("Ly", None),
-            params.get("periodic_x", False),
-            params.get("periodic_y", False),
-        )
 
         side = dir_x * dy - dir_y * dx
 
@@ -195,13 +203,9 @@ def circular_passing_behavior(agent: Agent,
         pass_strength = 1.0 - (nearest_left_d - d_stop) / (d_slow - d_stop)
 
     desired_target_radius = base_radius + max_offset * pass_strength
-    print(f"Agent {agent.id} has current desired target radius {desired_target_radius}")
-
     alpha = min(1.0, target_gain * dt)
     current_target = current_target + alpha * (desired_target_radius - current_target)
     agent.pass_target_radius = current_target
-
-    print(f"Agent {agent.id} has current target radius {agent.pass_target_radius}")
 
     omega = getattr(agent, "angular_speed", params.get("angular_speed", 0.0))
     tangential_speed = abs(omega) * current_target
@@ -222,6 +226,126 @@ def circular_passing_behavior(agent: Agent,
     agent.dir_y = dir_y
     agent.vx = speed * dir_x + corr_vx
     agent.vy = speed * dir_y + corr_vy
+
+
+def circular_robotics_behavior(agent: Agent,
+                               neighbors: List,
+                               params: Dict) -> None:
+    
+    
+    d_stop = params.get("d_stop", 0.15)
+    d_slow = params.get("d_slow", 0.4)
+    dt = params.get("dt", 0.05)
+    radius_target_gain = params.get("radius_target_gain", 4.0)
+    forward_range = params.get("sensing_radius", 3.0)
+    forward_half_angle = params.get("sensing_half_angle", math.radians(60.0))
+    side_range = params.get("side_sensing_radius", forward_range)
+    side_half_angle = params.get("side_sensing_half_angle", math.radians(45.0))
+
+
+    base_radius = getattr(agent, "orbit_radius", params.get("orbit_radius", 0.0))
+    current_target = getattr(agent, "pass_target_radius", 0.0)
+    if current_target == 0.0:
+        current_target = base_radius
+
+    r_min = params.get("circle_radius_min", base_radius)
+    r_max = params.get("circle_radius_max", base_radius)
+
+    dir_x, dir_y = circular_ccw_direction(agent, params)
+    left_dir_x, left_dir_y = -dir_y, dir_x
+    right_dir_x, right_dir_y = dir_y, -dir_x
+
+    nearest_d = None
+    nearest_angle = None
+    nearest_left_d = None
+    nearest_right_d = None
+
+    for nb in neighbors:
+        in_forward, forward_dist, dx, dy = is_neighbor_in_custom_cone(
+            agent, nb, params, dir_x, dir_y, forward_range, forward_half_angle
+        )
+        if in_forward:
+            signed_angle = math.atan2(dir_x * dy - dir_y * dx, dir_x * dx + dir_y * dy)
+            if nearest_d is None or (forward_dist is not None and forward_dist < nearest_d):
+                nearest_d = forward_dist
+                nearest_angle = signed_angle
+
+        in_left, left_dist, _, _ = is_neighbor_in_custom_cone(
+            agent, nb, params, left_dir_x, left_dir_y, side_range, side_half_angle
+        )
+        if in_left and (nearest_left_d is None or (left_dist is not None and left_dist < nearest_left_d)):
+            nearest_left_d = left_dist
+
+        in_right, right_dist, _, _ = is_neighbor_in_custom_cone(
+            agent, nb, params, right_dir_x, right_dir_y, side_range, side_half_angle
+        )
+        if in_right and (nearest_right_d is None or (right_dist is not None and right_dist < nearest_right_d)):
+            nearest_right_d = right_dist
+
+    agent.blocked = nearest_d is not None
+    agent.left_blocked = nearest_left_d is not None
+    agent.right_blocked = nearest_right_d is not None
+    agent.dist_to_nearest = nearest_d
+    agent.angle_to_nearest = nearest_angle
+
+    omega = getattr(agent, "angular_speed", params.get("angular_speed", 0.0))
+    base_tangential_speed = abs(omega) * current_target
+
+    if nearest_d is None:
+        closeness = 0.0
+        tangential_speed = base_tangential_speed
+    elif nearest_d <= d_stop:
+        closeness = 1.0
+        tangential_speed = 0.0
+    elif nearest_d >= d_slow:
+        closeness = 0.0
+        tangential_speed = base_tangential_speed
+    else:
+        t = (nearest_d - d_stop) / (d_slow - d_stop)
+        closeness = 1.0 - t
+        tangential_speed = t * base_tangential_speed
+
+    if not agent.blocked and not agent.left_blocked and not agent.right_blocked:
+        desired_radius = base_radius
+    else:
+        # if nearest_angle is None or (agent.left_blocked and agent.right_blocked):
+        # ^ this line was the bug! front cone empty -> radius reset to base
+        if agent.left_blocked and agent.right_blocked:
+            side_sign = 0.0
+            closeness = 1.0
+        elif (not agent.left_blocked) and ((False if nearest_angle is None else nearest_angle < 0.0) or agent.right_blocked):
+            side_sign = -1.0
+            closeness = 1.0
+        elif (not agent.right_blocked) and ((False if nearest_angle is None else nearest_angle > 0.0) or agent.left_blocked):
+            side_sign = 1.0
+            closeness = 1.0
+        else:
+            side_sign = 0.0
+
+
+        max_delta_inward = max(0.0, base_radius - r_min)
+        max_delta_outward = max(0.0, r_max - base_radius)
+        max_delta = max_delta_inward if side_sign < 0.0 else max_delta_outward
+        desired_radius = base_radius + side_sign * closeness * max_delta
+        # desired_radius = base_radius + side_sign * max_delta
+
+        desired_radius = max(r_min, min(r_max, desired_radius))
+        print(f"nearest angle: {nearest_angle}, side sign: {side_sign}, desired radius {desired_radius}")
+
+        # print(f"Agent {agent.id} desired radius: {desired_radius}, sign {side_sign}, closeness {closeness}, max_delta {max_delta}")
+
+
+    alpha = min(1.0, radius_target_gain * dt)
+    current_target = current_target + alpha * (desired_radius - current_target)
+    agent.pass_target_radius = current_target
+
+    tangential_speed = min(tangential_speed, abs(omega) * current_target) if tangential_speed > 0.0 else tangential_speed
+    corr_vx, corr_vy = radial_restoring_velocity(agent, params)
+
+    agent.dir_x = dir_x
+    agent.dir_y = dir_y
+    agent.vx = tangential_speed * dir_x + corr_vx
+    agent.vy = tangential_speed * dir_y + corr_vy
 
 
 # these agents move forward at their desired speed until a neighbor is detected
