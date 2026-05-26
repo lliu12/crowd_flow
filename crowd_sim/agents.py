@@ -22,7 +22,7 @@ class Agent:
     orbit_cx: float = 0.0
     orbit_cy: float = 0.0
     orbit_radius: float = 0.0
-    pass_target_radius: float = 0.0
+    target_radius: float = 0.0
     angular_speed: float = 0.0
     blocked: bool = False
     left_blocked: bool = False

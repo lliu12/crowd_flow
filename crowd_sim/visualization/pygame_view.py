@@ -22,6 +22,7 @@ class PygameViewer:
                  sensing_half_angle: float = math.radians(60.0),
                  side_sensing_radius: Optional[float] = None,
                  side_sensing_half_angle: float = math.radians(45.0),
+                 side_heading_offset: float = math.pi / 2.0,
                  orbit_center: Optional[Tuple[float, float]] = None,
                  orbit_radius: Optional[float] = None,
                  agent_radius_m = 0.2):
@@ -38,6 +39,7 @@ class PygameViewer:
         self.sensing_half_angle = sensing_half_angle
         self.side_sensing_radius = side_sensing_radius if side_sensing_radius is not None else sensing_radius
         self.side_sensing_half_angle = side_sensing_half_angle
+        self.side_heading_offset = side_heading_offset
         self.orbit_center = orbit_center
         self.orbit_radius = orbit_radius
 
@@ -174,8 +176,8 @@ class PygameViewer:
                 dir_y /= norm
 
                 angle = math.atan2(dir_y, dir_x)
-                left_angle = math.atan2(dir_x, -dir_y)
-                right_angle = math.atan2(-dir_x, dir_y)
+                left_angle = angle + self.side_heading_offset
+                right_angle = angle - self.side_heading_offset
 
                 forward_color = (120, 120, 120) if not getattr(a, "blocked", False) else (80, 80, 180)
                 side_clear_color =  (200, 230, 250) # (250, 230, 200)
