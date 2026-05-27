@@ -12,7 +12,7 @@ import pygame  # noqa: E402
 
 from crowd_sim.behaviors import circular_robotics_behavior
 from crowd_sim.circle_traffic_agent import CircleTrafficAgent
-from crowd_sim.environment import Walkway, PeriodicBoundary2D
+from crowd_sim.environment import Walkway, PeriodicBoundary2D, OpenBoundaryWithOverflow2D
 from crowd_sim.simulation import Simulation
 from crowd_sim.visualization.pygame_view import PygameViewer
 
@@ -77,8 +77,7 @@ def create_circle_agents(
             target_speed_std=target_speed_std,
         )
 
-        dir_x = -math.sin(theta)
-        dir_y = math.cos(theta)
+        heading = theta + math.pi / 2.0
         initial_tangential_speed = initial_radius * angular_speed
 
         agents.append(
@@ -86,11 +85,10 @@ def create_circle_agents(
                 id=i,
                 x=x,
                 y=y,
-                vx=initial_tangential_speed * dir_x,
-                vy=initial_tangential_speed * dir_y,
+                vx=initial_tangential_speed * math.cos(heading),
+                vy=initial_tangential_speed * math.sin(heading),
                 desired_speed=initial_tangential_speed,
-                dir_x=dir_x,
-                dir_y=dir_y,
+                heading=heading,
                 orbit_cx=center_x,
                 orbit_cy=center_y,
                 orbit_radius=radius,
@@ -105,12 +103,12 @@ def create_circle_agents(
 
 def main():
     walkway = Walkway(WALKWAY_LENGTH, WALKWAY_LENGTH)
-    boundary = PeriodicBoundary2D(walkway)
+    boundary = OpenBoundaryWithOverflow2D(walkway)
 
     dt = 0.03
     sim_time = 300.0
     sensing_radius = 0.4
-    num_agents = 40
+    num_agents = 1
     circle_radius = 0.2
     circle_radius_min = 0.2
     circle_radius_max = 0.6
@@ -132,13 +130,12 @@ def main():
         "circle_center_x": CIRCLE_CENTER_X,
         "circle_center_y": CIRCLE_CENTER_Y,
         "orbit_radius": circle_radius,
-        "radial_gain": 2.0,
+        "radial_gain": 1.0,
         "side_sensing_radius": 0.18,
         "side_sensing_half_angle": math.pi / 3.0,
         "side_heading_offset": math.pi / 3.0,
         "circle_radius_min": circle_radius_min,
         "circle_radius_max": circle_radius_max,
-        "radius_target_gain": 4.0,
         "lane_preference": lane_preference,
         "lane_return_delay": 2.0,
         "approach_rate_threshold": 0.0,

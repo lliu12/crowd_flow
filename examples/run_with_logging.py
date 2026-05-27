@@ -1,4 +1,5 @@
 # examples/run_with_logging.py
+import math
 import os
 import sys
 import random
@@ -42,10 +43,10 @@ def create_initial_agents(
         else:
             spd = random.gauss(desired_speed_mean, desired_speed_std)
 
-        # initial direction: +x
-        dir_x, dir_y = 1.0, 0.0
-        vx = spd * dir_x
-        vy = spd * dir_y
+        # initial heading: +x
+        heading = 0.0
+        vx = spd * math.cos(heading)
+        vy = spd * math.sin(heading)
 
         a = Agent(
             id=i,
@@ -54,8 +55,7 @@ def create_initial_agents(
             vx=vx,
             vy=vy,
             desired_speed=spd,
-            dir_x=dir_x,
-            dir_y=dir_y,
+            heading=heading,
         )
         agents.append(a)
 

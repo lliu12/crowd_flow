@@ -1,6 +1,7 @@
 # agents.py
 from collections import deque
 from dataclasses import dataclass, field
+import math
 from typing import Deque, Tuple, Optional
 
 
@@ -17,8 +18,7 @@ class Agent:
     vx: float
     vy: float
     desired_speed: float
-    dir_x: float  # direction unit vector x-component
-    dir_y: float  # direction unit vector y-component
+    heading: float  # radians CCW from +x
     orbit_cx: float = 0.0
     orbit_cy: float = 0.0
     orbit_radius: float = 0.0
@@ -38,6 +38,9 @@ class Agent:
 
     def velocity(self) -> Tuple[float, float]:
         return self.vx, self.vy
+
+    def direction(self) -> Tuple[float, float]:
+        return math.cos(self.heading), math.sin(self.heading)
 
     def speed(self) -> float:
         return (self.vx ** 2 + self.vy ** 2) ** 0.5

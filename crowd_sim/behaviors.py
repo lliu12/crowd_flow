@@ -1,10 +1,17 @@
 # behaviors.py
 
 import math
-from typing import List, Dict
+import numpy as np
+from typing import Dict, List, Optional, Tuple
 from .agents import Agent
 from .circle_traffic_agent import CircleTrafficAgent
-from typing import Optional, Tuple
+
+
+def heading_to_direction(heading: float) -> Tuple[float, float]:
+    return math.cos(heading), math.sin(heading)
+
+def direction_to_heading(vx: float, vy: float) -> float:
+    return math.atan2(vy, vx)
 
 
 def displacement_with_periodic(agent, nb,
@@ -31,14 +38,28 @@ def displacement_with_periodic(agent, nb,
     return dx, dy
 
 
-def is_neighbor_in_custom_cone(agent,
-                               nb,
-                               params: Dict,
-                               dir_x: float,
-                               dir_y: float,
-                               range_m: float,
-                               half_angle: float) -> Tuple[bool, Optional[float], float, float]:
-    """Check if nb is within a cone with explicit direction, range, and half-angle."""
+def is_neighbor_in_cone(agent,
+                        nb,
+                        params: Dict,
+                        heading: float,
+                        range_m: float,
+                        half_angle: float) -> Tuple[bool, Optional[float], float, float]:
+    """
+    Check whether nb lies within a symmetric sensing cone around heading.
+
+    Inputs:
+      - agent, nb: objects with x,y positions.
+      - params: may contain Lx, Ly, periodic_x, periodic_y for periodic boundaries.
+      - heading: agent heading in radians.
+      - range_m: maximum sensing distance.
+      - half_angle: half of the cone angle (radians) about heading.
+
+    Returns:
+      (in_cone, distance, dx, dy) where:
+        - in_cone: True if nb is inside the cone and within range, else False.
+        - distance: euclidean distance to nb (None if not in cone or at zero distance).
+        - dx, dy: displacement from agent to nb after applying periodic wrapping.
+    """
     Lx = params.get("Lx", None)
     Ly = params.get("Ly", None)
     periodic_x = params.get("periodic_x", False)
@@ -50,6 +71,7 @@ def is_neighbor_in_custom_cone(agent,
     if dist == 0.0 or dist > range_m:
         return False, None, dx, dy
 
+    dir_x, dir_y = heading_to_direction(heading)
     dot = dir_x * dx + dir_y * dy
     cos_angle = dot / dist
 
@@ -62,44 +84,21 @@ def is_neighbor_in_custom_cone(agent,
     return True, dist, dx, dy
 
 
-
-def is_neighbor_in_vision_cone(agent,
-                               nb,
-                               params: Dict,
-                               dir_x: float,
-                               dir_y: float) -> Tuple[bool, Optional[float]]:
-    """
-    Check if nb is within agent's vision cone.
-    Returns (in_cone, distance). Distance is None if not in cone.
-    """
-    R = params.get("sensing_radius", 3.0)
-    theta = params.get("sensing_half_angle", math.radians(60.0))
-    in_cone, dist, _, _ = is_neighbor_in_custom_cone(agent, nb, params, dir_x, dir_y, R, theta)
-    return in_cone, dist
-
-def circular_ccw_direction(agent: Agent, params: Dict) -> Tuple[float, float]:
-    """Return the unit tangent direction for counterclockwise motion."""
-    cx = getattr(agent, "orbit_cx", params.get("circle_center_x", 0.0))
-    cy = getattr(agent, "orbit_cy", params.get("circle_center_y", 0.0))
-
-    rx = agent.x - cx
-    ry = agent.y - cy
-    r = math.hypot(rx, ry)
-    if r == 0.0:
-        return 1.0, 0.0
-
-    return -ry / r, rx / r
-
+def circular_ccw_heading(agent: Agent, params: Dict) -> float:
+    """Return the tangent heading for counterclockwise motion."""
+    cx = agent.orbit_cx
+    cy = agent.orbit_cy
+    return math.atan2(agent.y - cy, agent.x - cx) + math.pi / 2.0
 
 
 def radial_restoring_velocity(agent: Agent, params: Dict) -> Tuple[float, float]:
     """Return a weak radial correction that keeps agents near the target orbit."""
-    cx = getattr(agent, "orbit_cx", params.get("circle_center_x", 0.0))
-    cy = getattr(agent, "orbit_cy", params.get("circle_center_y", 0.0))
-    target_r = getattr(agent, "target_radius", 0.0)
+    cx = agent.orbit_cx
+    cy = agent.orbit_cy
+    target_r = agent.target_radius
     if target_r == 0.0:
         target_r = getattr(agent, "orbit_radius", params.get("orbit_radius", 0.0))
-    k_r = params.get("radial_gain", 0.0)
+    k_r = params.get("radial_gain")
 
     rx = agent.x - cx
     ry = agent.y - cy
@@ -113,24 +112,29 @@ def radial_restoring_velocity(agent: Agent, params: Dict) -> Tuple[float, float]
     return k_r * err * ux, k_r * err * uy
 
 
-def rotate_vector(x: float, y: float, angle: float) -> Tuple[float, float]:
-    c = math.cos(angle)
-    s = math.sin(angle)
-    return c * x - s * y, s * x + c * y
-
-
-
 def circular_orbit_behavior(agent: Agent,
                             neighbors: List,
                             params: Dict) -> None:
-    d_stop = params.get("d_stop", 0.15)
-    d_slow = params.get("d_slow", 0.4)
+    d_stop = params.get("d_stop")
+    d_slow = params.get("d_slow")
 
-    dir_x, dir_y = circular_ccw_direction(agent, params)
+    # heading = agent.heading
+    heading = circular_ccw_heading(agent, params)
+    dir_x, dir_y = heading_to_direction(heading)
+
+    vision_range = params.get("sensing_radius")
+    vision_half_angle = params.get("sensing_half_angle")
 
     nearest_d = None
     for nb in neighbors:
-        in_cone, dist = is_neighbor_in_vision_cone(agent, nb, params, dir_x, dir_y)
+        in_cone, dist, _, _ = is_neighbor_in_cone(
+            agent,
+            nb,
+            params,
+            heading,
+            vision_range,
+            vision_half_angle,
+        )
         if not in_cone:
             continue
 
@@ -153,11 +157,9 @@ def circular_orbit_behavior(agent: Agent,
 
     corr_vx, corr_vy = radial_restoring_velocity(agent, params)
 
-    agent.dir_x = dir_x
-    agent.dir_y = dir_y
+    agent.heading = heading
     agent.vx = speed * dir_x + corr_vx
     agent.vy = speed * dir_y + corr_vy
-
 
 
 def circular_passing_behavior(agent: Agent,
@@ -169,7 +171,9 @@ def circular_passing_behavior(agent: Agent,
     target_gain = params.get("passing_target_gain", 2.0)
     dt = params.get("dt", 0.05)
 
-    dir_x, dir_y = circular_ccw_direction(agent, params)
+    heading = circular_ccw_heading(agent, params)
+    # heading = agent.heading
+    dir_x, dir_y = heading_to_direction(heading)
 
     base_radius = getattr(agent, "orbit_radius", params.get("orbit_radius", 0.0))
     current_target = getattr(agent, "target_radius", 0.0)
@@ -179,15 +183,17 @@ def circular_passing_behavior(agent: Agent,
     nearest_d = None
     nearest_left_d = None
 
+    sensing_range = params.get("sensing_radius", 3.0)
+    sensing_half_angle = params.get("sensing_half_angle", math.radians(60.0))
+
     for nb in neighbors:
-        in_cone, dist, dx, dy = is_neighbor_in_custom_cone(
+        in_cone, dist, dx, dy = is_neighbor_in_cone(
             agent,
             nb,
             params,
-            dir_x,
-            dir_y,
-            params.get("sensing_radius", 3.0),
-            params.get("sensing_half_angle", math.radians(60.0)),
+            heading,
+            sensing_range,
+            sensing_half_angle,
         )
         if not in_cone:
             continue
@@ -229,10 +235,10 @@ def circular_passing_behavior(agent: Agent,
 
     corr_vx, corr_vy = radial_restoring_velocity(agent, params)
 
-    agent.dir_x = dir_x
-    agent.dir_y = dir_y
     agent.vx = speed * dir_x + corr_vx
     agent.vy = speed * dir_y + corr_vy
+    # agent.heading = direction_to_heading(agent.vx, agent.vy)
+
 
 
 # Written to match implementation on the robots
@@ -243,10 +249,9 @@ def circular_robotics_behavior(agent: Agent,
     d_slow = params.get("d_slow", 0.4)
     dt = params.get("dt", 0.05)
     sim_time = params.get("sim_time", 0.0)
-    radius_target_gain = params.get("radius_target_gain", 4.0)
     forward_range = params.get("sensing_radius", 3.0)
     forward_half_angle = params.get("sensing_half_angle", math.radians(60.0))
-    side_range = params.get("side_sensing_radius", forward_range)
+    side_range = params.get("side_sensing_radius", 0)
     side_half_angle = params.get("side_sensing_half_angle", math.radians(45.0))
     side_heading_offset = params.get("side_heading_offset", math.pi / 3.0)
     lane_preference = params.get("lane_preference", "base")
@@ -262,9 +267,11 @@ def circular_robotics_behavior(agent: Agent,
     r_min = params.get("circle_radius_min", base_radius)
     r_max = params.get("circle_radius_max", base_radius)
 
-    dir_x, dir_y = circular_ccw_direction(agent, params)
-    left_dir_x, left_dir_y = rotate_vector(dir_x, dir_y, side_heading_offset)
-    right_dir_x, right_dir_y = rotate_vector(dir_x, dir_y, -side_heading_offset)
+    heading = circular_ccw_heading(agent, params)
+    # heading = agent.heading
+    dir_x, dir_y = heading_to_direction(heading)
+    left_heading = heading + side_heading_offset
+    right_heading = heading - side_heading_offset
 
     nearest_d = None
     nearest_angle = None
@@ -273,9 +280,10 @@ def circular_robotics_behavior(agent: Agent,
     nearest_right_d = None
     nearest_right_angle = None
 
+    # Detect neighbors in forward, left, and right cones and find nearest in each
     for nb in neighbors:
-        in_forward, forward_dist, dx, dy = is_neighbor_in_custom_cone(
-            agent, nb, params, dir_x, dir_y, forward_range, forward_half_angle
+        in_forward, forward_dist, dx, dy = is_neighbor_in_cone(
+            agent, nb, params, heading, forward_range, forward_half_angle
         )
         if in_forward:
             signed_angle = math.atan2(dir_x * dy - dir_y * dx, dir_x * dx + dir_y * dy)
@@ -283,8 +291,8 @@ def circular_robotics_behavior(agent: Agent,
                 nearest_d = forward_dist
                 nearest_angle = signed_angle
 
-        in_left, left_dist, left_dx, left_dy = is_neighbor_in_custom_cone(
-            agent, nb, params, left_dir_x, left_dir_y, side_range, side_half_angle
+        in_left, left_dist, left_dx, left_dy = is_neighbor_in_cone(
+            agent, nb, params, left_heading, side_range, side_half_angle
         )
         if in_left:
             left_signed_angle = math.atan2(dir_x * left_dy - dir_y * left_dx, dir_x * left_dx + dir_y * left_dy)
@@ -292,8 +300,8 @@ def circular_robotics_behavior(agent: Agent,
                 nearest_left_d = left_dist
                 nearest_left_angle = left_signed_angle
 
-        in_right, right_dist, right_dx, right_dy = is_neighbor_in_custom_cone(
-            agent, nb, params, right_dir_x, right_dir_y, side_range, side_half_angle
+        in_right, right_dist, right_dx, right_dy = is_neighbor_in_cone(
+            agent, nb, params, right_heading, side_range, side_half_angle
         )
         if in_right:
             right_signed_angle = math.atan2(dir_x * right_dy - dir_y * right_dx, dir_x * right_dx + dir_y * right_dy)
@@ -329,6 +337,7 @@ def circular_robotics_behavior(agent: Agent,
     target_tangential_speed = abs(omega) * current_radius
     current_speed = agent.speed()
 
+    # determine speed based on front cone distance to nearest
     if nearest_d is None:
         tangential_speed = target_tangential_speed
     elif nearest_d <= d_stop:
@@ -339,23 +348,33 @@ def circular_robotics_behavior(agent: Agent,
         t = (nearest_d - d_stop) / (d_slow - d_stop)
         tangential_speed = t * target_tangential_speed
 
-    desired_radius = max(r_min, min(r_max, base_radius))
+
+    # determine target radius
+    desired_radius = base_radius
+
     if isinstance(agent, CircleTrafficAgent):
         if lane_preference == "base":
             relevant_last_blocked = agent.last_blocked_left_time
             drift_back_allowed = (sim_time - relevant_last_blocked) > lane_return_delay
+            # initialize hold_radius once
             if agent.hold_radius is None:
                 agent.hold_radius = current_radius
             if drift_back_allowed:
-                desired_radius = max(current_radius - max_delta, min(base_radius, current_radius + max_delta))
-                desired_radius = max(r_min, min(r_max, desired_radius))
+                # limit change from current_radius
+                desired_radius = np.clip(base_radius,
+                                        current_radius - max_delta,
+                                        current_radius + max_delta)
             else:
-                desired_radius = max(r_min, min(r_max, agent.hold_radius))
+                desired_radius = agent.hold_radius
         elif lane_preference == "current":
-            desired_radius = max(r_min, min(r_max, current_radius))
+            desired_radius = current_radius
         else:
-            desired_radius = max(r_min, min(r_max, current_radius))
+            print("invalid lane preference argument")
+            desired_radius = current_radius
+    # clip to min and max permitted values
+    desired_radius = np.clip(desired_radius, r_min, r_max)
 
+    # determine whether passing is allowed
     approach_rate = None
     pass_allowed = True
     if isinstance(agent, CircleTrafficAgent) and nearest_d is not None and agent.last_min_dist is not None and dt > 0.0:
@@ -363,17 +382,16 @@ def circular_robotics_behavior(agent: Agent,
         if approach_rate < approach_rate_threshold and current_speed > 0.95 * target_tangential_speed:
             pass_allowed = False
 
+    # passing decision and target radius offset
     if agent.blocked or agent.left_blocked or agent.right_blocked:
         if agent.left_blocked and agent.right_blocked:
             side_sign = 0.0
         elif (not agent.left_blocked) and pass_allowed and right_side_active:
             side_sign = -1.0
-            if isinstance(agent, CircleTrafficAgent):
-                agent.hold_radius = None
+            agent.hold_radius = None
         elif (not agent.right_blocked) and pass_allowed and left_side_active:
             side_sign = 1.0
-            if isinstance(agent, CircleTrafficAgent):
-                agent.hold_radius = None
+            agent.hold_radius = None
         else:
             side_sign = 0.0
 
@@ -383,17 +401,17 @@ def circular_robotics_behavior(agent: Agent,
             elif side_sign > 0.0:
                 desired_radius = min(r_max, current_radius + max_delta)
 
-    alpha = min(1.0, radius_target_gain * dt)
-    current_target = current_target + alpha * (desired_radius - current_target)
-    agent.target_radius = current_target
+    agent.target_radius = desired_radius
 
     tangential_speed = min(tangential_speed, abs(omega) * current_radius) if tangential_speed > 0.0 else tangential_speed
     corr_vx, corr_vy = radial_restoring_velocity(agent, params)
 
-    agent.dir_x = dir_x
-    agent.dir_y = dir_y
+    agent.heading = heading
     agent.vx = tangential_speed * dir_x + corr_vx
     agent.vy = tangential_speed * dir_y + corr_vy
+    # agent.heading = direction_to_heading(agent.vx, agent.vy)
+    # print(agent.heading, circular_ccw_heading(agent, params))
+
 
     if isinstance(agent, CircleTrafficAgent):
         agent.last_min_dist = nearest_d
@@ -406,26 +424,26 @@ def circular_robotics_behavior(agent: Agent,
 def simple_unidirectional_behavior(agent,
                                    neighbors: List,
                                    params: Dict) -> None:
-    R = params.get("sensing_radius", 3.0)  # still used? can be removed if only in helper
     d_stop = params.get("d_stop", 0.5)
     d_slow = params.get("d_slow", 1.5)
     v0 = agent.desired_speed
 
-    dir_x = agent.dir_x
-    dir_y = agent.dir_y
+    dir_x, dir_y = heading_to_direction(agent.heading)
 
-    # Normalize direction just in case
-    norm = math.hypot(dir_x, dir_y)
-    if norm == 0.0:
-        dir_x, dir_y = 1.0, 0.0
-        norm = 1.0
-    dir_x /= norm
-    dir_y /= norm
+    vision_range = params.get("sensing_radius", 3.0)
+    vision_half_angle = params.get("sensing_half_angle", math.radians(60.0))
 
     nearest_d = None
 
     for nb in neighbors:
-        in_cone, dist = is_neighbor_in_vision_cone(agent, nb, params, dir_x, dir_y)
+        in_cone, dist, _, _ = is_neighbor_in_cone(
+            agent,
+            nb,
+            params,
+            agent.heading,
+            vision_range,
+            vision_half_angle,
+        )
         if not in_cone:
             continue
 
@@ -444,34 +462,36 @@ def simple_unidirectional_behavior(agent,
             t = (nearest_d - d_stop) / (d_slow - d_stop)
             speed = t * v0
 
+    agent.blocked = nearest_d is not None
     agent.vx = speed * dir_x
     agent.vy = speed * dir_y
+
 
 # these agents move forward at their desired speed until a neighbor is detected
 # then they slow their horizontal speed down at a linear rate but also begin moving to the side
 def simple_passing_behavior(agent,
-                                   neighbors: List,
-                                   params: Dict) -> None:
-    R = params.get("sensing_radius", 3.0)  # still used? can be removed if only in helper
+                            neighbors: List,
+                            params: Dict) -> None:
     d_stop = params.get("d_stop", 0.5)
     d_slow = params.get("d_slow", 1.5)
     v0 = agent.desired_speed
 
-    dir_x = agent.dir_x
-    dir_y = agent.dir_y
+    dir_x, dir_y = heading_to_direction(agent.heading)
 
-    # Normalize direction just in case
-    norm = math.hypot(dir_x, dir_y)
-    if norm == 0.0:
-        dir_x, dir_y = 1.0, 0.0
-        norm = 1.0
-    dir_x /= norm
-    dir_y /= norm
+    vision_range = params.get("sensing_radius", 3.0)
+    vision_half_angle = params.get("sensing_half_angle", math.radians(60.0))
 
     nearest_d = None
 
     for nb in neighbors:
-        in_cone, dist = is_neighbor_in_vision_cone(agent, nb, params, dir_x, dir_y)
+        in_cone, dist, _, _ = is_neighbor_in_cone(
+            agent,
+            nb,
+            params,
+            agent.heading,
+            vision_range,
+            vision_half_angle,
+        )
         if not in_cone:
             continue
 
@@ -481,20 +501,19 @@ def simple_passing_behavior(agent,
     # Decide speed
     if nearest_d is None:
         speed = v0
+        y_speed = 0.0
     else:
         if nearest_d <= d_stop:
             speed = 0.0
-
             y_speed = v0 / 10
         elif nearest_d >= d_slow:
             speed = v0
-
-            y_speed = 0
+            y_speed = 0.0
         else:
             t = (nearest_d - d_stop) / (d_slow - d_stop)
             speed = t * v0
-
             y_speed = v0 / 10
 
+    agent.blocked = nearest_d is not None
     agent.vx = speed * dir_x
-    agent.vy = y_speed # speed * dir_y
+    agent.vy = y_speed  # speed * dir_y

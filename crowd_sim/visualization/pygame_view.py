@@ -37,7 +37,7 @@ class PygameViewer:
         self.clock = pygame.time.Clock()
         self.fps_cap = fps_cap
         self.sensing_half_angle = sensing_half_angle
-        self.side_sensing_radius = side_sensing_radius if side_sensing_radius is not None else sensing_radius
+        self.side_sensing_radius = side_sensing_radius if side_sensing_radius is not None else 0
         self.side_sensing_half_angle = side_sensing_half_angle
         self.side_heading_offset = side_heading_offset
         self.orbit_center = orbit_center
@@ -166,20 +166,11 @@ class PygameViewer:
             pygame.draw.circle(self.screen, color, (sx, sy), self.agent_radius_px)
 
             if self.show_cones:
-                dir_x = a.dir_x
-                dir_y = a.dir_y
-                norm = math.hypot(dir_x, dir_y)
-                if norm == 0.0:
-                    dir_x, dir_y = 1.0, 0.0
-                    norm = 1.0
-                dir_x /= norm
-                dir_y /= norm
-
-                angle = math.atan2(dir_y, dir_x)
+                angle = a.heading
                 left_angle = angle + self.side_heading_offset
                 right_angle = angle - self.side_heading_offset
 
-                forward_color = (120, 120, 120) if not getattr(a, "blocked", False) else (80, 80, 180)
+                forward_color = (140, 140, 140) if not getattr(a, "blocked", False) else (140, 60, 60)
                 side_clear_color =  (200, 230, 250) # (250, 230, 200)
                 side_blocked_color = (255, 150, 160) #  (160, 150, 255)
                 left_color = side_clear_color if not getattr(a, "left_blocked", False) else side_blocked_color
