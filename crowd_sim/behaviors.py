@@ -330,8 +330,21 @@ def circular_robotics_behavior(agent: Agent,
 
     cx = getattr(agent, "orbit_cx", params.get("circle_center_x", 0.0))
     cy = getattr(agent, "orbit_cy", params.get("circle_center_y", 0.0))
+    polar_angle = math.atan2(agent.y - cy, agent.x - cx)
     current_radius = math.hypot(agent.x - cx, agent.y - cy)
     current_radius = current_radius if current_radius > 0.0 else base_radius
+
+    if isinstance(agent, CircleTrafficAgent):
+        if agent.last_polar_angle is None:
+            agent.last_polar_angle = polar_angle
+        else:
+            delta_angle = polar_angle - agent.last_polar_angle
+            while delta_angle <= -math.pi:
+                delta_angle += 2.0 * math.pi
+            while delta_angle > math.pi:
+                delta_angle -= 2.0 * math.pi
+            agent.lap_count_ccw += delta_angle / (2.0 * math.pi)
+            agent.last_polar_angle = polar_angle
 
     omega = getattr(agent, "angular_speed", params.get("angular_speed", 0.0))
     target_tangential_speed = abs(omega) * current_radius
@@ -414,6 +427,14 @@ def circular_robotics_behavior(agent: Agent,
 
 
     if isinstance(agent, CircleTrafficAgent):
+        agent.current_radius = current_radius
+        agent.target_tangential_speed = target_tangential_speed
+        agent.current_speed = current_speed
+        agent.approach_rate = approach_rate
+        agent.pass_allowed = pass_allowed
+        agent.tangential_speed_command = tangential_speed
+        agent.radial_correction_vx = corr_vx
+        agent.radial_correction_vy = corr_vy
         agent.last_min_dist = nearest_d
 
 

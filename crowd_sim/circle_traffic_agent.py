@@ -15,3 +15,13 @@ class CircleTrafficAgent(Agent):
     left_angle_to_nearest: Optional[float] = None
     right_dist_to_nearest: Optional[float] = None
     right_angle_to_nearest: Optional[float] = None
+    current_radius: float = 0.0
+    target_tangential_speed: float = 0.0
+    current_speed: float = 0.0
+    approach_rate: Optional[float] = None
+    pass_allowed: bool = True
+    lap_count_ccw: float = 0.0
+    last_polar_angle: Optional[float] = None
+    tangential_speed_command: float = 0.0
+    radial_correction_vx: float = 0.0
+    radial_correction_vy: float = 0.0
