@@ -20,10 +20,11 @@ from examples.run_circle_flow import (
 
 
 NUM_AGENTS_OPTIONS = [1, 3, 5, 7, 10, 15, 20, 25, 30, 40]
+REACTION_DELAY_OPTIONS = [0.0, 0.05]
 NUM_TRIALS = 20
-EXPERIMENT_NAME = "20260527_try_experimentmatch"
+EXPERIMENT_NAME = "20260528_circle_flow_reaction_delay"
 LOG_INTERVAL_TIME = 10.0
-ROUND_DIGITS = 4
+ROUND_DIGITS = 3
 
 
 def round_if_number(value, digits: int = ROUND_DIGITS):
@@ -42,6 +43,8 @@ def make_behavior_params(
     d_stop: float,
     d_slow: float,
     lane_preference: str,
+    reaction_delay: float,
+    dt: float,
 ) -> dict:
     return {
         "sensing_radius": sensing_radius,
@@ -62,11 +65,15 @@ def make_behavior_params(
         "approach_rate_threshold": 0.0,
         "max_delta": 0.2,
         "sim_time": 0.0,
+        "reaction_delay": reaction_delay,
+        "reaction_delay_steps": int(round(reaction_delay / dt)),
     }
 
 
 def build_circle_experiment_row(step, time, agent, context):
     return [
+        round_if_number(context["reaction_delay"]),
+        context["reaction_delay_steps"],
         context["trial"],
         context["num_robots"],
         step,
@@ -76,9 +83,12 @@ def build_circle_experiment_row(step, time, agent, context):
         round_if_number(agent.y),
         round_if_number(agent.heading),
         round_if_number(getattr(agent, "target_tangential_speed", None)),
+        round_if_number(getattr(agent, "executed_tangential_speed_command", None)),
         round_if_number(getattr(agent, "current_speed", agent.speed())),
         round_if_number(getattr(agent, "current_radius", None)),
         round_if_number(getattr(agent, "target_radius", None)),
+        round_if_number(getattr(agent, "executed_target_radius", None)),
+        getattr(agent, "executed_command_age_steps", None),
         round_if_number(getattr(agent, "angular_speed", None)),
         round_if_number(getattr(agent, "lap_count_ccw", None)),
         round_if_number(agent.vx),
@@ -102,6 +112,8 @@ def build_circle_experiment_row(step, time, agent, context):
 
 def build_circle_experiment_header() -> list[str]:
     return [
+        "reaction_delay",
+        "reaction_delay_steps",
         "trial",
         "num_robots",
         "step",
@@ -111,9 +123,12 @@ def build_circle_experiment_header() -> list[str]:
         "y",
         "heading",
         "target_tangential_speed",
+        "executed_tangential_speed_command",
         "current_speed",
         "current_radius",
         "target_radius",
+        "executed_target_radius",
+        "executed_command_age_steps",
         "angular_speed",
         "lap_count_ccw",
         "vx",
@@ -164,16 +179,17 @@ def main():
     target_speed_std = 1.0
 
     output_dir = os.path.join(os.path.dirname(__file__), "..", "output", EXPERIMENT_NAME)
-    output_file = os.path.join(output_dir, "circle_flow_experiments.csv")
+    output_file = os.path.join(output_dir, "circle_flow_reaction_delay_experiments.csv")
 
     total_trials = 0
-    total_trial_count = len(NUM_AGENTS_OPTIONS) * NUM_TRIALS
+    total_trial_count = len(REACTION_DELAY_OPTIONS) * len(NUM_AGENTS_OPTIONS) * NUM_TRIALS
     experiment_start_time = time.perf_counter()
 
     print(f"Starting experiment: {EXPERIMENT_NAME}")
     print(f"Output file: {output_file}")
-    print(f"Total trials: {total_trial_count}")
+    print(f"Reaction delays: {REACTION_DELAY_OPTIONS}")
     print(f"Agent settings: {NUM_AGENTS_OPTIONS}")
+    print(f"Total trials: {total_trial_count}")
 
     with CSVLogger(
         output_file,
@@ -181,92 +197,111 @@ def main():
         row_builder=build_circle_experiment_row,
         header=build_circle_experiment_header(),
     ) as logger:
-        for num_agents in NUM_AGENTS_OPTIONS:
-            setting_start_time = time.perf_counter()
-            completed_before_setting = total_trials
-            print(f"\nStarting num_agents={num_agents} ({completed_before_setting + 1}-{completed_before_setting + NUM_TRIALS} of {total_trial_count} trials)")
-
-            for trial in range(NUM_TRIALS):
-                trial_number = trial + 1
-                overall_trial_number = total_trials + 1
-                trial_start_time = time.perf_counter()
-                print(
-                    f"  Trial {trial_number}/{NUM_TRIALS} for num_agents={num_agents} "
-                    f"(overall {overall_trial_number}/{total_trial_count})...",
-                    flush=True,
-                )
-
-                behavior_params = make_behavior_params(
-                    sensing_radius=sensing_radius,
-                    circle_radius=circle_radius,
-                    circle_radius_min=circle_radius_min,
-                    circle_radius_max=circle_radius_max,
-                    d_stop=d_stop,
-                    d_slow=d_slow,
-                    lane_preference=lane_preference,
-                )
-
-                agents = create_circle_agents(
-                    num_agents=num_agents,
-                    center_x=CIRCLE_CENTER_X,
-                    center_y=CIRCLE_CENTER_Y,
-                    radius=circle_radius,
-                    radius_min=circle_radius_min,
-                    radius_max=circle_radius_max,
-                    target_speed_dist=target_speed_dist,
-                    target_speed_min=target_speed_min,
-                    target_speed_max=target_speed_max,
-                    target_speed_mean=target_speed_mean,
-                    target_speed_std=target_speed_std,
-                )
-
-                sim = Simulation(
-                    walkway=walkway,
-                    boundary_handler=boundary,
-                    agents=agents,
-                    dt=dt,
-                    behavior_fn=circular_robotics_behavior,
-                    behavior_params=behavior_params,
-                    sensing_radius=sensing_radius,
-                    periodic_x=True,
-                    periodic_y=True,
-                )
-
-                logger.reset_schedule(0.0)
-                step_count = 0
-                context = {
-                    "experiment_name": EXPERIMENT_NAME,
-                    "trial": trial,
-                    "num_robots": num_agents,
-                    "dt": dt,
-                }
-
-                logger.log(step_count, sim.time, sim.agents, context)
-                while sim.time < sim_time:
-                    behavior_params["sim_time"] = sim.time
-                    sim.step()
-                    step_count += 1
-                    logger.log(step_count, sim.time, sim.agents, context)
-
-                total_trials += 1
-                trial_elapsed = time.perf_counter() - trial_start_time
-                total_elapsed = time.perf_counter() - experiment_start_time
-                avg_trial_time = total_elapsed / total_trials
-                trials_remaining = total_trial_count - total_trials
-                eta_seconds = avg_trial_time * trials_remaining
-                print(
-                    f"    Completed in {format_duration(trial_elapsed)} | "
-                    f"elapsed {format_duration(total_elapsed)} | "
-                    f"ETA {format_duration(eta_seconds)}",
-                    flush=True,
-                )
-
-            setting_elapsed = time.perf_counter() - setting_start_time
+        for reaction_delay in REACTION_DELAY_OPTIONS:
+            delay_steps = int(round(reaction_delay / dt))
             print(
-                f"Finished num_agents={num_agents} in {format_duration(setting_elapsed)} "
-                f"({total_trials}/{total_trial_count} trials complete)",
+                f"\nStarting reaction_delay={reaction_delay:.2f}s "
+                f"(delay_steps={delay_steps})",
                 flush=True,
             )
+
+            for num_agents in NUM_AGENTS_OPTIONS:
+                setting_start_time = time.perf_counter()
+                completed_before_setting = total_trials
+                print(
+                    f"  Starting num_agents={num_agents} "
+                    f"({completed_before_setting + 1}-{completed_before_setting + NUM_TRIALS} "
+                    f"of {total_trial_count} trials)",
+                    flush=True,
+                )
+
+                for trial in range(NUM_TRIALS):
+                    trial_number = trial + 1
+                    overall_trial_number = total_trials + 1
+                    trial_start_time = time.perf_counter()
+                    print(
+                        f"    Trial {trial_number}/{NUM_TRIALS} for reaction_delay={reaction_delay:.2f}s "
+                        f"and num_agents={num_agents} "
+                        f"(overall {overall_trial_number}/{total_trial_count})...",
+                        flush=True,
+                    )
+
+                    behavior_params = make_behavior_params(
+                        sensing_radius=sensing_radius,
+                        circle_radius=circle_radius,
+                        circle_radius_min=circle_radius_min,
+                        circle_radius_max=circle_radius_max,
+                        d_stop=d_stop,
+                        d_slow=d_slow,
+                        lane_preference=lane_preference,
+                        reaction_delay=reaction_delay,
+                        dt=dt,
+                    )
+
+                    agents = create_circle_agents(
+                        num_agents=num_agents,
+                        center_x=CIRCLE_CENTER_X,
+                        center_y=CIRCLE_CENTER_Y,
+                        radius=circle_radius,
+                        radius_min=circle_radius_min,
+                        radius_max=circle_radius_max,
+                        target_speed_dist=target_speed_dist,
+                        target_speed_min=target_speed_min,
+                        target_speed_max=target_speed_max,
+                        target_speed_mean=target_speed_mean,
+                        target_speed_std=target_speed_std,
+                    )
+
+                    sim = Simulation(
+                        walkway=walkway,
+                        boundary_handler=boundary,
+                        agents=agents,
+                        dt=dt,
+                        behavior_fn=circular_robotics_behavior,
+                        behavior_params=behavior_params,
+                        sensing_radius=sensing_radius,
+                        periodic_x=True,
+                        periodic_y=True,
+                    )
+
+                    logger.reset_schedule(0.0)
+                    step_count = 0
+                    context = {
+                        "experiment_name": EXPERIMENT_NAME,
+                        "reaction_delay": reaction_delay,
+                        "reaction_delay_steps": delay_steps,
+                        "trial": trial,
+                        "num_robots": num_agents,
+                        "dt": dt,
+                    }
+
+                    logger.log(step_count, sim.time, sim.agents, context)
+                    while sim.time < sim_time:
+                        behavior_params["sim_time"] = sim.time
+                        sim.step()
+                        step_count += 1
+                        logger.log(step_count, sim.time, sim.agents, context)
+
+                    total_trials += 1
+                    trial_elapsed = time.perf_counter() - trial_start_time
+                    total_elapsed = time.perf_counter() - experiment_start_time
+                    avg_trial_time = total_elapsed / total_trials
+                    trials_remaining = total_trial_count - total_trials
+                    eta_seconds = avg_trial_time * trials_remaining
+                    print(
+                        f"      Completed in {format_duration(trial_elapsed)} | "
+                        f"elapsed {format_duration(total_elapsed)} | "
+                        f"ETA {format_duration(eta_seconds)}",
+                        flush=True,
+                    )
+
+                setting_elapsed = time.perf_counter() - setting_start_time
+                print(
+                    f"  Finished reaction_delay={reaction_delay:.2f}s, num_agents={num_agents} "
+                    f"in {format_duration(setting_elapsed)} "
+                    f"({total_trials}/{total_trial_count} trials complete)",
+                    flush=True,
+                )
 
     total_elapsed = time.perf_counter() - experiment_start_time
     print(f"\nExperiment finished. Data saved to: {output_file}")

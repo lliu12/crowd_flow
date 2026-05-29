@@ -258,6 +258,10 @@ def circular_robotics_behavior(agent: Agent,
     lane_return_delay = params.get("lane_return_delay", 2.0)
     approach_rate_threshold = params.get("approach_rate_threshold", 0.0)
     max_delta = params.get("max_delta", 0.2)
+    reaction_delay = params.get("reaction_delay", 0.0)
+    reaction_delay_steps = params.get("reaction_delay_steps")
+    if reaction_delay_steps is None:
+        reaction_delay_steps = max(0, int(round(reaction_delay / dt)))
 
     base_radius = getattr(agent, "base_orbit_radius", getattr(agent, "orbit_radius", params.get("orbit_radius", 0.0)))
     current_target = getattr(agent, "target_radius", 0.0)
@@ -268,7 +272,6 @@ def circular_robotics_behavior(agent: Agent,
     r_max = params.get("circle_radius_max", base_radius)
 
     heading = circular_ccw_heading(agent, params)
-    # heading = agent.heading
     dir_x, dir_y = heading_to_direction(heading)
     left_heading = heading + side_heading_offset
     right_heading = heading - side_heading_offset
@@ -280,7 +283,6 @@ def circular_robotics_behavior(agent: Agent,
     nearest_right_d = None
     nearest_right_angle = None
 
-    # Detect neighbors in forward, left, and right cones and find nearest in each
     for nb in neighbors:
         in_forward, forward_dist, dx, dy = is_neighbor_in_cone(
             agent, nb, params, heading, forward_range, forward_half_angle
@@ -350,7 +352,6 @@ def circular_robotics_behavior(agent: Agent,
     target_tangential_speed = abs(omega) * current_radius
     current_speed = agent.speed()
 
-    # determine speed based on front cone distance to nearest
     if nearest_d is None:
         tangential_speed = target_tangential_speed
     elif nearest_d <= d_stop:
@@ -361,22 +362,18 @@ def circular_robotics_behavior(agent: Agent,
         t = (nearest_d - d_stop) / (d_slow - d_stop)
         tangential_speed = t * target_tangential_speed
 
-
-    # determine target radius
     desired_radius = base_radius
 
     if isinstance(agent, CircleTrafficAgent):
         if lane_preference == "base":
             relevant_last_blocked = agent.last_blocked_left_time
             drift_back_allowed = (sim_time - relevant_last_blocked) > lane_return_delay
-            # initialize hold_radius once
             if agent.hold_radius is None:
                 agent.hold_radius = current_radius
             if drift_back_allowed:
-                # limit change from current_radius
                 desired_radius = np.clip(base_radius,
-                                        current_radius - max_delta,
-                                        current_radius + max_delta)
+                                         current_radius - max_delta,
+                                         current_radius + max_delta)
             else:
                 desired_radius = agent.hold_radius
         elif lane_preference == "current":
@@ -384,10 +381,8 @@ def circular_robotics_behavior(agent: Agent,
         else:
             print("invalid lane preference argument")
             desired_radius = current_radius
-    # clip to min and max permitted values
     desired_radius = np.clip(desired_radius, r_min, r_max)
 
-    # determine whether passing is allowed
     approach_rate = None
     pass_allowed = True
     if isinstance(agent, CircleTrafficAgent) and nearest_d is not None and agent.last_min_dist is not None and dt > 0.0:
@@ -395,7 +390,6 @@ def circular_robotics_behavior(agent: Agent,
         if approach_rate < approach_rate_threshold and current_speed > 0.95 * target_tangential_speed:
             pass_allowed = False
 
-    # passing decision and target radius offset
     if agent.blocked or agent.left_blocked or agent.right_blocked:
         if agent.left_blocked and agent.right_blocked:
             side_sign = 0.0
@@ -414,17 +408,35 @@ def circular_robotics_behavior(agent: Agent,
             elif side_sign > 0.0:
                 desired_radius = min(r_max, current_radius + max_delta)
 
-    agent.target_radius = desired_radius
-
     tangential_speed = min(tangential_speed, abs(omega) * current_radius) if tangential_speed > 0.0 else tangential_speed
     corr_vx, corr_vy = radial_restoring_velocity(agent, params)
 
-    agent.heading = heading
-    agent.vx = tangential_speed * dir_x + corr_vx
-    agent.vy = tangential_speed * dir_y + corr_vy
-    # agent.heading = direction_to_heading(agent.vx, agent.vy)
-    # print(agent.heading, circular_ccw_heading(agent, params))
+    command = {
+        "heading": heading,
+        "vx": tangential_speed * dir_x + corr_vx,
+        "vy": tangential_speed * dir_y + corr_vy,
+        "target_radius": desired_radius,
+        "tangential_speed_command": tangential_speed,
+    }
 
+    executed_command = command
+    executed_command_age_steps = 0
+    if isinstance(agent, CircleTrafficAgent):
+        agent.command_buffer.append(command)
+        if reaction_delay_steps <= 0:
+            executed_command = command
+            agent.command_buffer.clear()
+        elif len(agent.command_buffer) <= reaction_delay_steps:
+            executed_command = agent.command_buffer[0]
+            executed_command_age_steps = len(agent.command_buffer) - 1
+        else:
+            executed_command = agent.command_buffer.popleft()
+            executed_command_age_steps = reaction_delay_steps
+
+    agent.target_radius = executed_command["target_radius"]
+    agent.heading = executed_command["heading"]
+    agent.vx = executed_command["vx"]
+    agent.vy = executed_command["vy"]
 
     if isinstance(agent, CircleTrafficAgent):
         agent.current_radius = current_radius
@@ -436,6 +448,9 @@ def circular_robotics_behavior(agent: Agent,
         agent.radial_correction_vx = corr_vx
         agent.radial_correction_vy = corr_vy
         agent.last_min_dist = nearest_d
+        agent.executed_tangential_speed_command = executed_command["tangential_speed_command"]
+        agent.executed_target_radius = executed_command["target_radius"]
+        agent.executed_command_age_steps = executed_command_age_steps
 
 
 # these agents move forward at their desired speed until a neighbor is detected

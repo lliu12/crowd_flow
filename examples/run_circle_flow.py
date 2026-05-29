@@ -105,10 +105,10 @@ def main():
     walkway = Walkway(WALKWAY_LENGTH, WALKWAY_LENGTH)
     boundary = OpenBoundaryWithOverflow2D(walkway)
 
-    dt = 0.03
+    dt = 0.025
     sim_time = 300.0
     sensing_radius = 0.4
-    num_agents = 1
+    num_agents = 30
     circle_radius = 0.2
     circle_radius_min = 0.2
     circle_radius_max = 0.6
@@ -121,10 +121,12 @@ def main():
     target_speed_mean = math.pi / 10
     target_speed_std = 1.0
     gui_speedup = 2
+    reaction_delay = 0
 
     behavior_params = {
         "sensing_radius": sensing_radius,
         "sensing_half_angle": SENSING_HALF_ANGLE,
+        "reaction_delay": reaction_delay,
         "d_stop": d_stop,
         "d_slow": d_slow,
         "circle_center_x": CIRCLE_CENTER_X,

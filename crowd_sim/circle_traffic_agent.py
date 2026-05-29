@@ -1,5 +1,6 @@
-from dataclasses import dataclass
-from typing import Optional
+from collections import deque
+from dataclasses import dataclass, field
+from typing import Deque, Optional
 
 from .agents import Agent
 
@@ -25,3 +26,7 @@ class CircleTrafficAgent(Agent):
     tangential_speed_command: float = 0.0
     radial_correction_vx: float = 0.0
     radial_correction_vy: float = 0.0
+    command_buffer: Deque[dict] = field(default_factory=deque)
+    executed_tangential_speed_command: float = 0.0
+    executed_target_radius: float = 0.0
+    executed_command_age_steps: int = 0
