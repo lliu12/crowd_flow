@@ -121,12 +121,14 @@ def main():
     target_speed_mean = math.pi / 10
     target_speed_std = 1.0
     gui_speedup = 2
-    reaction_delay = 0
+    reaction_delay = 0        
+    max_speedup_acceleration = 0.05
 
     behavior_params = {
         "sensing_radius": sensing_radius,
         "sensing_half_angle": SENSING_HALF_ANGLE,
         "reaction_delay": reaction_delay,
+        "max_speedup_acceleration": max_speedup_acceleration,
         "d_stop": d_stop,
         "d_slow": d_slow,
         "circle_center_x": CIRCLE_CENTER_X,

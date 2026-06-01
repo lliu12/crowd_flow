@@ -92,7 +92,10 @@ def circular_ccw_heading(agent: Agent, params: Dict) -> float:
 
 
 def radial_restoring_velocity(agent: Agent, params: Dict) -> Tuple[float, float]:
-    """Return a weak radial correction that keeps agents near the target orbit."""
+    """
+    Return a weak radial correction that keeps agents near the target orbit.
+    The correction is perpendicular to the circle tangent.
+    """
     cx = agent.orbit_cx
     cy = agent.orbit_cy
     target_r = agent.target_radius
@@ -110,6 +113,27 @@ def radial_restoring_velocity(agent: Agent, params: Dict) -> Tuple[float, float]
     ux = rx / r
     uy = ry / r
     return k_r * err * ux, k_r * err * uy
+
+
+# def limit_tangential_speedup(current_tangential_speed: float,
+#                              target_tangential_speed: float,
+#                              max_speedup_acceleration: Optional[float],
+#                              dt: float) -> Tuple[float, float, bool]:
+#     if max_speedup_acceleration is None or dt <= 0.0:
+#         return target_tangential_speed, 0.0, False
+
+#     if target_tangential_speed <= current_tangential_speed:
+#         applied_accel = (target_tangential_speed - current_tangential_speed) / dt
+#         return target_tangential_speed, applied_accel, False
+
+#     max_delta_speed = max_speedup_acceleration * dt
+#     requested_delta = target_tangential_speed - current_tangential_speed
+
+#     if requested_delta <= max_delta_speed:
+#         return target_tangential_speed, requested_delta / dt, False
+
+#     limited_speed = current_tangential_speed + max_delta_speed
+#     return limited_speed, max_speedup_acceleration, True
 
 
 def circular_orbit_behavior(agent: Agent,
@@ -240,11 +264,12 @@ def circular_passing_behavior(agent: Agent,
     # agent.heading = direction_to_heading(agent.vx, agent.vy)
 
 
-
 # Written to match implementation on the robots
 def circular_robotics_behavior(agent: Agent,
                                neighbors: List,
                                params: Dict) -> None:
+    
+    # import variables
     d_stop = params.get("d_stop", 0.15)
     d_slow = params.get("d_slow", 0.4)
     dt = params.get("dt", 0.05)
@@ -258,6 +283,7 @@ def circular_robotics_behavior(agent: Agent,
     lane_return_delay = params.get("lane_return_delay", 2.0)
     approach_rate_threshold = params.get("approach_rate_threshold", 0.0)
     max_delta = params.get("max_delta", 0.2)
+    max_speedup_acceleration = params.get("max_speedup_acceleration", None)
     reaction_delay = params.get("reaction_delay", 0.0)
     reaction_delay_steps = params.get("reaction_delay_steps")
     if reaction_delay_steps is None:
@@ -276,6 +302,7 @@ def circular_robotics_behavior(agent: Agent,
     left_heading = heading + side_heading_offset
     right_heading = heading - side_heading_offset
 
+    # detect neighbors
     nearest_d = None
     nearest_angle = None
     nearest_left_d = None
@@ -336,6 +363,7 @@ def circular_robotics_behavior(agent: Agent,
     current_radius = math.hypot(agent.x - cx, agent.y - cy)
     current_radius = current_radius if current_radius > 0.0 else base_radius
 
+    # count laps
     if isinstance(agent, CircleTrafficAgent):
         if agent.last_polar_angle is None:
             agent.last_polar_angle = polar_angle
@@ -352,6 +380,7 @@ def circular_robotics_behavior(agent: Agent,
     target_tangential_speed = abs(omega) * current_radius
     current_speed = agent.speed()
 
+    # compute velocity slowdown due to neighbors in front
     if nearest_d is None:
         tangential_speed = target_tangential_speed
     elif nearest_d <= d_stop:
@@ -362,6 +391,7 @@ def circular_robotics_behavior(agent: Agent,
         t = (nearest_d - d_stop) / (d_slow - d_stop)
         tangential_speed = t * target_tangential_speed
 
+    # compute target radius
     desired_radius = base_radius
 
     if isinstance(agent, CircleTrafficAgent):
@@ -408,13 +438,15 @@ def circular_robotics_behavior(agent: Agent,
             elif side_sign > 0.0:
                 desired_radius = min(r_max, current_radius + max_delta)
 
-    tangential_speed = min(tangential_speed, abs(omega) * current_radius) if tangential_speed > 0.0 else tangential_speed
     corr_vx, corr_vy = radial_restoring_velocity(agent, params)
 
+    # select command to execute based on reaction delay
     command = {
         "heading": heading,
-        "vx": tangential_speed * dir_x + corr_vx,
-        "vy": tangential_speed * dir_y + corr_vy,
+        "dir_x": dir_x,
+        "dir_y": dir_y,
+        "corr_vx": corr_vx,
+        "corr_vy": corr_vy,
         "target_radius": desired_radius,
         "tangential_speed_command": tangential_speed,
     }
@@ -433,10 +465,24 @@ def circular_robotics_behavior(agent: Agent,
             executed_command = agent.command_buffer.popleft()
             executed_command_age_steps = reaction_delay_steps
 
+    executed_heading = executed_command["heading"]
+    exec_dir_x = executed_command["dir_x"]
+    exec_dir_y = executed_command["dir_y"]
+    exec_corr_vx = executed_command["corr_vx"]
+    exec_corr_vy = executed_command["corr_vy"]
+
+    # limit tangential speed here
+    max_allowed_speed_increase = max_speedup_acceleration * dt if max_speedup_acceleration is not None else np.inf
+    realized_tangential_speed = np.clip(executed_command["tangential_speed_command"], executed_command["tangential_speed_command"], agent.current_tangential_speed + max_allowed_speed_increase)
+
+    final_vx = realized_tangential_speed * exec_dir_x + exec_corr_vx
+    final_vy = realized_tangential_speed * exec_dir_y + exec_corr_vy
+
     agent.target_radius = executed_command["target_radius"]
-    agent.heading = executed_command["heading"]
-    agent.vx = executed_command["vx"]
-    agent.vy = executed_command["vy"]
+    agent.heading = executed_heading
+    agent.vx = final_vx
+    agent.vy = final_vy
+    agent.current_tangential_speed = realized_tangential_speed
 
     if isinstance(agent, CircleTrafficAgent):
         agent.current_radius = current_radius
@@ -445,12 +491,13 @@ def circular_robotics_behavior(agent: Agent,
         agent.approach_rate = approach_rate
         agent.pass_allowed = pass_allowed
         agent.tangential_speed_command = tangential_speed
-        agent.radial_correction_vx = corr_vx
-        agent.radial_correction_vy = corr_vy
+        agent.radial_correction_vx = exec_corr_vx
+        agent.radial_correction_vy = exec_corr_vy
         agent.last_min_dist = nearest_d
         agent.executed_tangential_speed_command = executed_command["tangential_speed_command"]
         agent.executed_target_radius = executed_command["target_radius"]
         agent.executed_command_age_steps = executed_command_age_steps
+        agent.realized_tangential_speed = realized_tangential_speed
 
 
 # these agents move forward at their desired speed until a neighbor is detected

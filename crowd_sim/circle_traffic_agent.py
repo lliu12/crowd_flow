@@ -30,3 +30,7 @@ class CircleTrafficAgent(Agent):
     executed_tangential_speed_command: float = 0.0
     executed_target_radius: float = 0.0
     executed_command_age_steps: int = 0
+    executed_tangential_speed_before_accel_limit: float = 0.0
+    realized_tangential_speed: float = 0.0
+    applied_tangential_acceleration: float = 0.0
+    tangential_acceleration_limited: bool = False

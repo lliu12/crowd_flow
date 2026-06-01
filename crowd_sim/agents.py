@@ -19,6 +19,7 @@ class Agent:
     vy: float
     desired_speed: float
     heading: float  # radians CCW from +x
+    current_tangential_speed: float = 0.0
     orbit_cx: float = 0.0
     orbit_cy: float = 0.0
     orbit_radius: float = 0.0
